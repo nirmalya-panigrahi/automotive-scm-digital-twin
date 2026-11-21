@@ -112,7 +112,7 @@ export default async function handler(_req: unknown, res: Res) {
     })
   );
 
-  const indices: { name: string; change3m: number; currentValue?: number; proxy: boolean }[] = [];
+  const indices: { name: string; change3m: number; avgMonthly?: number; currentValue?: number; proxy: boolean }[] = [];
   // month key -> { seriesName: % change vs the shared base month }
   const history: Record<string, Record<string, number>> = {};
   const failed: string[] = [];
@@ -135,9 +135,19 @@ export default async function handler(_req: unknown, res: Res) {
     // 3-month change measured from the series' own latest month (monthly series lag 1-2 months)
     const latestKey = months[months.length - 1][0];
     const past = byKey.get(addMonths(latestKey, -3)) ?? months[Math.max(0, months.length - 4)][1];
+    // Average month-over-month % change across the last 3 months (skips months with gaps)
+    const moms: number[] = [];
+    for (let k = 0; k < 3; k++) {
+      const cur = byKey.get(addMonths(latestKey, -k));
+      const prev = byKey.get(addMonths(latestKey, -k - 1));
+      if (cur !== undefined && prev !== undefined && prev !== 0) moms.push((cur / prev - 1) * 100);
+    }
+    const avgMonthly = moms.length ? +(moms.reduce((a, b) => a + b, 0) / moms.length).toFixed(1) : undefined;
+
     indices.push({
       name: src.name,
       change3m: +(((latest / past) - 1) * 100).toFixed(1),
+      ...(avgMonthly !== undefined ? { avgMonthly } : {}),
       ...(src.exact ? { currentValue: +latest.toFixed(2) } : {}),
       proxy: !src.exact,
     });
