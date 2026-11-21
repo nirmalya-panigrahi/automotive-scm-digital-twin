@@ -9,6 +9,7 @@ import { useMarketIndices } from '../useMarketIndices';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { TrendingUp, TrendingDown, Info, History, Globe, Zap, Ship } from 'lucide-react';
 import { motion } from 'motion/react';
+import CarTwinViewport from './car3d/CarTwinViewport';
 
 function IndexSlider({ 
   idx, 
@@ -254,8 +255,8 @@ export default function ShockSimulator() {
       </div>
 
       {/* Visualizer */}
-      <div className="lg:col-span-8 bg-slate-900/50 rounded-xl border border-slate-800 p-8 flex flex-col min-h-[500px] shadow-2xl">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-10">
+      <div className="lg:col-span-8 bg-slate-900/50 rounded-xl border border-slate-800 p-8 flex flex-col shadow-2xl">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-bold text-white mb-2 tracking-tight">Cost Scenario Explorer</h2>
             <div className="inline-flex flex-col">
@@ -288,7 +289,14 @@ export default function ShockSimulator() {
           </div>
         </div>
 
-        <div className="flex-grow min-h-0 relative mb-8">
+        <CarTwinViewport
+          selectedComponentId={selectedComponentId}
+          onSelectComponent={handleComponentChange}
+          useSubstitution={useSubstitution}
+          calculatedShock={calculatedShock}
+        />
+
+        <div className="h-56 w-full relative mb-8">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={forecastData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
