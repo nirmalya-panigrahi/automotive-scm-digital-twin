@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { MARKET_INDICES, HISTORICAL_SHOCKS } from './data';
 
-type Index = (typeof MARKET_INDICES)[number];
+type Index = (typeof MARKET_INDICES)[number] & { avgMonthly?: number };
 type HistoryRow = (typeof HISTORICAL_SHOCKS)[number];
 
 interface LiveIndex {
   name: string;
   change3m: number;
+  avgMonthly?: number;
   currentValue?: number;
   proxy?: boolean;
 }
@@ -40,6 +41,7 @@ export function useMarketIndices() {
             return {
               ...p,
               change3m: l.change3m,
+              ...(l.avgMonthly !== undefined ? { avgMonthly: l.avgMonthly } : {}),
               ...(l.currentValue !== undefined ? { currentValue: l.currentValue } : {}),
             };
           })
@@ -60,5 +62,18 @@ export function useMarketIndices() {
     };
   }, []);
 
-  return { indices, historical, live, updatedAt };
+  // Default slider position for each index: the average monthly % change over the last
+  // 3 months (live), or change3m / 3 as an approximation when running on static data.
+  // To start sliders from the full 3-month move instead, use `idx.change3m`.
+  // useMemo keeps the object identity stable so effects depending on it don't re-fire every render.
+  const baseline = useMemo(() => {
+    const b: Record<string, number> = {};
+    for (const idx of indices) {
+      const v = idx.avgMonthly ?? idx.change3m / 3;
+      b[idx.name] = Math.round(v * 2) / 2; // snap to the slider's 0.5 step
+    }
+    return b;
+  }, [indices]);
+
+  return { indices, historical, baseline, live, updatedAt };
 }
