@@ -11,6 +11,7 @@ import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUnifo
 import { Layers, Eye, Camera, ChevronDown, ChevronUp, RotateCcw } from 'lucide-react';
 import { createCarMaterialLibrary } from './carMaterials';
 import { buildDefenderModel, DefenderModelHandle } from './buildDefenderModel';
+import { loadStudioExrEnvironment } from './proceduralExrEnv';
 import { COMPONENT_LIST } from '../../data';
 
 type XrayMode = 'auto' | 'solid' | 'xray';
@@ -21,6 +22,7 @@ interface CarTwinViewportProps {
   onSelectComponent: (id: string) => void;
   useSubstitution: boolean;
   calculatedShock: number;
+  className?: string;
 }
 
 // Reusable module-scope math objects (zero GC inside render loop)
@@ -55,6 +57,7 @@ export default function CarTwinViewport({
   onSelectComponent,
   useSubstitution,
   calculatedShock,
+  className = 'h-[420px] sm:h-[480px]',
 }: CarTwinViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
   const [explodeTarget, setExplodeTarget] = useState(0);
@@ -129,17 +132,30 @@ export default function CarTwinViewport({
     renderer.domElement.style.height = '100%';
     container.appendChild(renderer.domElement);
 
-    // 2. Scene, Camera, Fog & Studio Environment
+    // 2. Scene, Camera, Fog & HDR Studio Environment (RoomEnvironment instant + EXRLoader HDR upgrade)
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#0b1120');
-    scene.fog = new THREE.FogExp2(0x0b1120, 0.042);
+    scene.fog = new THREE.FogExp2(0x0b1120, 0.038);
 
     const pmrem = new THREE.PMREMGenerator(renderer);
     const roomEnv = new RoomEnvironment();
-    const envTarget = pmrem.fromScene(roomEnv, 0.04);
-    scene.environment = envTarget.texture;
+    let activeEnvTarget: THREE.Texture = pmrem.fromScene(roomEnv, 0.04).texture;
+    scene.environment = activeEnvTarget;
     roomEnv.dispose();
     pmrem.dispose();
+
+    let disposed = false;
+    const cancelExrLoad = loadStudioExrEnvironment(renderer, (hdrEnvMap) => {
+      if (disposed) {
+        hdrEnvMap.dispose();
+        return;
+      }
+      const prevEnv = activeEnvTarget;
+      activeEnvTarget = hdrEnvMap;
+      scene.environment = hdrEnvMap;
+      prevEnv.dispose();
+      requestRender();
+    });
 
     const camera = new THREE.PerspectiveCamera(38, width / height, 0.1, 80);
     camera.position.copy(STUDIO_CAM_POS);
@@ -154,34 +170,35 @@ export default function CarTwinViewport({
     controls.minPolarAngle = 0.12;
     controls.update();
 
-    // 3. 3-Point Studio Lighting + Overhead Softbox
-    const hemiLight = new THREE.HemisphereLight(0x93c5fd, 0x0f172a, 0.85);
+    // 3. 3-Point Sunlight & Studio Softbox Rig (Warm Key Sunlight + Cool Sky/Ground + Rim)
+    const hemiLight = new THREE.HemisphereLight(0x7dd3fc, 0x0f172a, 0.72);
     scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff7ed, 2.2);
-    keyLight.position.set(5.5, 8.5, 5.0);
+    const keyLight = new THREE.DirectionalLight(0xfff4e0, 2.75);
+    keyLight.position.set(6.5, 7.2, 5.8);
     keyLight.castShadow = !isSoftwareGl;
-    keyLight.shadow.mapSize.width = 1024;
-    keyLight.shadow.mapSize.height = 1024;
+    keyLight.shadow.mapSize.width = 2048;
+    keyLight.shadow.mapSize.height = 2048;
+    keyLight.shadow.radius = 2.5;
     keyLight.shadow.camera.near = 1;
-    keyLight.shadow.camera.far = 24;
-    const d = 4.2;
+    keyLight.shadow.camera.far = 22;
+    const d = 3.6;
     keyLight.shadow.camera.left = -d;
     keyLight.shadow.camera.right = d;
     keyLight.shadow.camera.top = d;
     keyLight.shadow.camera.bottom = -d;
-    keyLight.shadow.bias = -0.0005;
-    keyLight.shadow.normalBias = 0.02;
+    keyLight.shadow.bias = -0.0003;
+    keyLight.shadow.normalBias = 0.018;
     scene.add(keyLight);
 
     const rimLight = new THREE.DirectionalLight(0x38bdf8, 1.15);
-    rimLight.position.set(-5.0, 4.5, -5.5);
+    rimLight.position.set(-6.0, 4.2, -5.5);
     scene.add(rimLight);
 
     let softboxLight: THREE.RectAreaLight | null = null;
     if (!isSoftwareGl) {
       RectAreaLightUniformsLib.init();
-      softboxLight = new THREE.RectAreaLight(0xe0f2fe, 3.2, 6.5, 2.4);
+      softboxLight = new THREE.RectAreaLight(0xe0f2fe, 3.0, 6.5, 2.4);
       softboxLight.position.set(0, 4.8, 0.4);
       softboxLight.lookAt(0, 0.8, 0);
       scene.add(softboxLight);
@@ -327,7 +344,6 @@ export default function CarTwinViewport({
     let renderBusy = false;
     let renderDirty = false;
     let lastTime = performance.now();
-    let disposed = false;
 
     function afterDraw(cb: () => void) {
       const gl = renderer.getContext() as WebGL2RenderingContext;
@@ -514,6 +530,7 @@ export default function CarTwinViewport({
 
     return () => {
       disposed = true;
+      cancelExrLoad();
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
       resizeObserver.disconnect();
@@ -534,7 +551,7 @@ export default function CarTwinViewport({
       contactPlaneGeo.dispose();
       contactPlaneMat.dispose();
       shadowTex.dispose();
-      envTarget.dispose();
+      activeEnvTarget.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
@@ -572,7 +589,7 @@ export default function CarTwinViewport({
       : 'text-cyan-400 border-cyan-500/40';
 
   return (
-    <div className="relative w-full h-[420px] sm:h-[460px] rounded-xl overflow-hidden border border-slate-800 bg-[#0b1120] mb-8 select-none">
+    <div className={`relative w-full rounded-xl overflow-hidden border border-slate-800 bg-[#0b1120] select-none ${className}`}>
       {/* Isolated WebGL Mount Container */}
       <div ref={mountRef} className="w-full h-full" />
 
