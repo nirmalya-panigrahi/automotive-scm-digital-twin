@@ -3,8 +3,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { useState, useMemo } from 'react';
-import { COMPONENT_LIST, MARKET_INDICES, HISTORICAL_SHOCKS } from '../data';
+import { useState, useMemo, useEffect, useRef } from 'react';
+import { COMPONENT_LIST, MARKET_INDICES } from '../data';
+import { useMarketIndices } from '../useMarketIndices';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { TrendingUp, TrendingDown, Info, History, Globe, Zap, Ship } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -34,9 +35,9 @@ function IndexSlider({
         type="range" 
         min="-50" 
         max="200" 
-        step="5"
+        step="0.5"
         value={value || 0} 
-        onChange={(e) => onChange(parseInt(e.target.value))}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
         className="w-full accent-cyan-400 h-1 bg-slate-800 rounded-lg appearance-none cursor-pointer"
       />
     </div>
@@ -77,9 +78,15 @@ function MaterialBar({
 }
 
 export default function ShockSimulator() {
-  const [shocks, setShocks] = useState<Record<string, number>>(() => 
-    MARKET_INDICES.reduce((acc, idx) => ({ ...acc, [idx.name]: 0 }), {})
-  );
+  const { indices, historical, baseline, live, updatedAt } = useMarketIndices();
+  // Sliders start at the recent market trend (see useMarketIndices) rather than 0%.
+  const [shocks, setShocks] = useState<Record<string, number>>(() => ({ ...baseline }));
+  const userTouched = useRef(false);
+
+  // When live data arrives, move the sliders to the live trend - unless the user already moved one.
+  useEffect(() => {
+    if (!userTouched.current) setShocks({ ...baseline });
+  }, [baseline]);
 
   const [selectedComponentId, setSelectedComponentId] = useState(COMPONENT_LIST[0].id);
   const [isNearshoring, setIsNearshoring] = useState(false);
@@ -140,7 +147,13 @@ export default function ShockSimulator() {
   };
 
   const resetShocks = () => {
-    setShocks(MARKET_INDICES.reduce((acc, idx) => ({ ...acc, [idx.name]: 0 }), {}));
+    userTouched.current = false;
+    setShocks({ ...baseline });
+  };
+
+  const zeroShocks = () => {
+    userTouched.current = true;
+    setShocks(indices.reduce((acc, idx) => ({ ...acc, [idx.name]: 0 }), {}));
   };
 
   return (
@@ -152,13 +165,19 @@ export default function ShockSimulator() {
             <Zap size={100} />
           </div>
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest mb-6 border-b border-slate-800 pb-3">Market Index Simulator</h3>
+          <p className="-mt-3 mb-4 text-[9px] font-mono uppercase tracking-wider text-slate-500">
+            <span className={live ? 'text-emerald-400' : 'text-slate-600'}>●</span>{' '}
+            {live
+              ? `Live data · updated ${updatedAt ? new Date(updatedAt).toLocaleTimeString() : ''}`
+              : 'Static baseline data'}
+          </p>
           <div className="grid grid-cols-1 gap-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
-            {MARKET_INDICES.map(idx => (
+            {indices.map(idx => (
               <IndexSlider 
                 key={idx.id} 
                 idx={idx} 
                 value={shocks[idx.name]} 
-                onChange={(val) => setShocks(prev => ({ ...prev, [idx.name]: val }))}
+                onChange={(val) => { userTouched.current = true; setShocks(prev => ({ ...prev, [idx.name]: val })); }}
               />
             ))}
           </div>
@@ -168,8 +187,14 @@ export default function ShockSimulator() {
           >
             <span className="flex items-center justify-center gap-2">
               <History size={12} className="group-hover:rotate-[-45deg] transition-transform" />
-              Reset All Simulation Shocks
+              Reset to Market Trend
             </span>
+          </button>
+          <button
+            onClick={zeroShocks}
+            className="mt-2 w-full py-2 text-slate-500 hover:text-slate-300 font-mono text-[10px] uppercase tracking-widest transition-colors"
+          >
+            Zero All Shocks
           </button>
         </div>
 
@@ -394,7 +419,7 @@ export default function ShockSimulator() {
 
         <div className="h-64 w-full">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={HISTORICAL_SHOCKS}>
+            <LineChart data={historical}>
               <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
               <XAxis 
                 dataKey="month" 
