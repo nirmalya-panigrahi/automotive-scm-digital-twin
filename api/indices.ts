@@ -44,6 +44,13 @@ const SOURCES: Source[] = [
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const TIMEOUT_MS = 8000;
 
+/** "2026-11" + n months -> "2027-02" etc. */
+function addMonths(key: string, n: number): string {
+  const [y, m] = key.split('-').map(Number);
+  const d = new Date(Date.UTC(y, m - 1 + n, 1));
+  return d.toISOString().slice(0, 7);
+}
+
 /** Collapse any series to one value per month (last observation wins), sorted ascending. */
 function toMonthly(rows: { date: string; v: number }[]): Point[] {
   const byMonth = new Map<string, number>();
@@ -106,9 +113,15 @@ export default async function handler(_req: unknown, res: Res) {
   );
 
   const indices: { name: string; change3m: number; currentValue?: number; proxy: boolean }[] = [];
-  // month key -> { seriesName: % change vs first month in window }
+  // month key -> { seriesName: % change vs the shared base month }
   const history: Record<string, Record<string, number>> = {};
   const failed: string[] = [];
+
+  // One shared 7-month calendar window (base month + 6) so every series is measured
+  // from the SAME starting month and the lines are comparable on the chart.
+  const nowKey = new Date().toISOString().slice(0, 7);
+  const windowKeys = Array.from({ length: 7 }, (_, i) => addMonths(nowKey, i - 6));
+  const baseKey = windowKeys[0];
 
   settled.forEach((r, i) => {
     if (r.status !== 'fulfilled') {
@@ -117,27 +130,31 @@ export default async function handler(_req: unknown, res: Res) {
     }
     const { src, months, latest } = r.value;
     if (months.length < 2) return;
+    const byKey = new Map(months);
 
-    const past = months[Math.max(0, months.length - 4)][1]; // ~3 months back
-    const change3m = +(((latest / past) - 1) * 100).toFixed(1);
-
+    // 3-month change measured from the series' own latest month (monthly series lag 1-2 months)
+    const latestKey = months[months.length - 1][0];
+    const past = byKey.get(addMonths(latestKey, -3)) ?? months[Math.max(0, months.length - 4)][1];
     indices.push({
       name: src.name,
-      change3m,
+      change3m: +(((latest / past) - 1) * 100).toFixed(1),
       ...(src.exact ? { currentValue: +latest.toFixed(2) } : {}),
       proxy: !src.exact,
     });
 
-    const window = months.slice(-6);
-    const base = window[0][1];
-    for (const [m, v] of window) {
-      (history[m] ??= {})[src.name] = +(((v / base) - 1) * 100).toFixed(1);
+    const base = byKey.get(baseKey);
+    if (base === undefined) return; // can't anchor this series to the shared base month
+    for (const key of windowKeys) {
+      const v = byKey.get(key);
+      if (v !== undefined) (history[key] ??= {})[src.name] = +(((v / base) - 1) * 100).toFixed(1);
     }
   });
 
-  const historical = Object.entries(history)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([m, vals]) => ({ month: MONTHS[+m.slice(5, 7) - 1], ...vals }));
+  // Emit every month in the window (even if some series have no value yet -> gap in chart)
+  const historical = windowKeys.map(key => ({
+    month: MONTHS[+key.slice(5, 7) - 1],
+    ...(history[key] ?? {}),
+  }));
 
   res.status(200).json({
     indices,
